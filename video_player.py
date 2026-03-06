@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtCore import Qt, QUrl, QTime, QPoint, QSize, QTimer, QRect
-from PyQt6.QtGui import QShortcut, QKeySequence, QMouseEvent, QWindow, QCursor
+from PyQt6.QtGui import QShortcut, QKeySequence, QMouseEvent, QWindow, QCursor, QIcon
 
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event: QMouseEvent):
@@ -21,6 +21,9 @@ class MiniControlOverlay(QWidget):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
+        # 同步主視窗圖示
+        self.setWindowIcon(self.player.windowIcon())
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
@@ -107,6 +110,29 @@ class VideoPlayer(QMainWindow):
 
         self.setWindowTitle("Gemini Pro Player")
         self.resize(1100, 750)
+        
+        # 設定圖示 (嘗試讀取 icon.png 或 logo.png)
+        import os
+        icon_name = "icon.png"
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), icon_name)
+        
+        if os.path.exists(icon_path):
+            app_icon = QIcon(icon_path)
+            self.setWindowIcon(app_icon)
+            QApplication.setWindowIcon(app_icon) # 設定全域應用程式圖示
+            print(f"Icon loaded from: {icon_path}")
+        else:
+            print(f"Icon not found at: {icon_path}")
+        
+        # 為了讓 Windows 工作列也顯示正確圖示，需設定 AppUserModelID
+        if os.name == 'nt':
+            try:
+                import ctypes
+                myappid = 'gemini.pro.player.v1' 
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            except Exception as e:
+                print(f"Error setting AppUserModelID: {e}")
+
         self.is_mini_mode = False
         self.old_geometry = None
         self.drag_pos = QPoint()
@@ -430,13 +456,23 @@ class VideoPlayer(QMainWindow):
         return f"{h:02}:{m:02}:{s:02}" if h > 0 else f"{m:02}:{s:02}"
 
 if __name__ == "__main__":
+    # 在建立 QApplication 之前設定 AppUserModelID，這對 Windows 任務欄圖示至關重要
+    import os
+    if os.name == 'nt':
+        try:
+            import ctypes
+            # 使用更獨特且具備組織結構的 ID
+            myappid = 'gemini.video.player.pro.v1' 
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print(f"Failed to set AppUserModelID: {e}")
+
     app = QApplication(sys.argv)
     player = VideoPlayer()
     player.show()
     
     # 檢查是否有傳入檔案路徑參數
     if len(sys.argv) > 1:
-        # Windows 傳遞檔案路徑作為第一個參數
         video_path = sys.argv[1]
         player.loadVideo(video_path)
         
