@@ -419,8 +419,23 @@ class VideoPlayer(QMainWindow):
             icon = QIcon(icon_path); self.setWindowIcon(icon); QApplication.setWindowIcon(icon)
 
     def closeEvent(self, event):
-        self.mediaPlayer.stop()
-        self.fs_overlay.close(); super().closeEvent(event)
+        # Stop all timers first to prevent them from calling methods on a half-destroyed object
+        if hasattr(self, "ui_update_timer"):
+            self.ui_update_timer.stop()
+        if hasattr(self, "mouse_monitor_timer"):
+            self.mouse_monitor_timer.stop()
+        if hasattr(self, "hide_timer"):
+            self.hide_timer.stop()
+            
+        # Stop playback and release VLC resources
+        if hasattr(self, "mediaPlayer"):
+            self.mediaPlayer.stop()
+            self.mediaPlayer.release()
+        if hasattr(self, "vlc_instance"):
+            self.vlc_instance.release()
+            
+        self.fs_overlay.close()
+        super().closeEvent(event)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
