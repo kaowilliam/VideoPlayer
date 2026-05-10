@@ -443,7 +443,26 @@ class VideoPlayer(QMainWindow):
         self.fs_overlay.close()
         super().closeEvent(event)
 
+def register_app():
+    if sys.platform == 'win32':
+        import winreg
+        exe_path = os.path.abspath(sys.argv[0])
+        exe_name = os.path.basename(exe_path)
+        try:
+            # Register in HKCU\Software\Classes\Applications so Windows recognizes it as a valid handler
+            app_key = rf"Software\Classes\Applications\{exe_name}"
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, app_key) as key:
+                winreg.SetValueEx(key, "FriendlyAppName", 0, winreg.REG_SZ, "Gemini Pro Player")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{app_key}\SupportedTypes") as key:
+                for ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv']:
+                    winreg.SetValueEx(key, ext, 0, winreg.REG_SZ, "")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{app_key}\shell\open\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f'"{exe_path}" "%1"')
+        except Exception:
+            pass
+
 if __name__ == "__main__":
+    register_app()
     if sys.platform == 'win32':
         import ctypes
         myappid = 'gemini.pro.player.1.0' # arbitrary string
