@@ -414,9 +414,15 @@ class VideoPlayer(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.exitSpecialModes)
 
     def loadAppIcon(self):
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(base_path, "icon.png")
         if os.path.exists(icon_path):
-            icon = QIcon(icon_path); self.setWindowIcon(icon); QApplication.setWindowIcon(icon)
+            icon = QIcon(icon_path)
+            self.setWindowIcon(icon)
+            QApplication.setWindowIcon(icon)
 
     def closeEvent(self, event):
         # Stop all timers first to prevent them from calling methods on a half-destroyed object
@@ -438,6 +444,14 @@ class VideoPlayer(QMainWindow):
         super().closeEvent(event)
 
 if __name__ == "__main__":
+    if sys.platform == 'win32':
+        import ctypes
+        myappid = 'gemini.pro.player.1.0' # arbitrary string
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     player = VideoPlayer()
     player.show()
