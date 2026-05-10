@@ -433,12 +433,19 @@ class VideoPlayer(QMainWindow):
         if hasattr(self, "hide_timer"):
             self.hide_timer.stop()
             
-        # Stop playback and release VLC resources
-        if hasattr(self, "mediaPlayer"):
+        # Safely detach and stop VLC to prevent threading crashes on exit
+        if hasattr(self, "mediaPlayer") and self.mediaPlayer:
             self.mediaPlayer.stop()
-            self.mediaPlayer.release()
-        if hasattr(self, "vlc_instance"):
-            self.vlc_instance.release()
+            
+            # Detach the video output widget to prevent VLC from rendering into a dying widget
+            if sys.platform == "win32":
+                self.mediaPlayer.set_hwnd(0)
+            elif sys.platform == "darwin":
+                self.mediaPlayer.set_nsobject(0)
+            else:
+                self.mediaPlayer.set_xwindow(0)
+            
+            self.mediaPlayer.set_media(None)
             
         self.fs_overlay.close()
         super().closeEvent(event)
