@@ -1,9 +1,29 @@
 import sys
 import os
+
+# Add VLC path to environment for python-vlc to find DLLs
+if sys.platform == "win32":
+    import winreg
+    def find_vlc():
+        paths = []
+        for key in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+            try:
+                reg = winreg.OpenKey(key, r"SOFTWARE\VideoLAN\VLC")
+                path, _ = winreg.QueryValueEx(reg, "InstallDir")
+                paths.append(path)
+            except: pass
+        # Common default paths as fallback
+        paths.extend([r"C:\Program Files\VideoLAN\VLC", r"C:\Program Files (x86)\VideoLAN\VLC"])
+        for p in paths:
+            if os.path.exists(os.path.join(p, "libvlc.dll")):
+                os.add_dll_directory(p)
+                return p
+        return None
+    vlc_path = find_vlc()
+
+import vlc
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QSlider, QFileDialog, QLabel)
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtCore import Qt, QUrl, QPoint, QTimer, QRect, QEvent
 from PyQt6.QtGui import QShortcut, QKeySequence, QMouseEvent, QIcon, QCursor
 
@@ -51,7 +71,6 @@ class FullscreenOverlay(QWidget):
         bg_layout = QVBoxLayout(self.bg)
         bg_layout.setContentsMargins(20, 10, 20, 10)
         
-        # --- 第一行：進度條 ---
         prog_layout = QHBoxLayout()
         self.currLbl = QLabel("00:00")
         self.totalLbl = QLabel("00:00")
@@ -72,7 +91,6 @@ class FullscreenOverlay(QWidget):
         prog_layout.addWidget(self.totalLbl)
         bg_layout.addLayout(prog_layout)
         
-        # --- 第二行：控制按鈕 ---
         btns_layout = QHBoxLayout()
         btns_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         btns_layout.setSpacing(30)
@@ -90,7 +108,6 @@ class FullscreenOverlay(QWidget):
         bg_layout.addLayout(btns_layout)
         
         main_layout.addWidget(self.bg)
-        
         self.hide_timer = QTimer()
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self.hide)
@@ -118,7 +135,7 @@ class FullscreenOverlay(QWidget):
         self.syncPosition()
         if not self.isVisible(): self.show()
         self.raise_()
-        self.hide_timer.start(3000) # 縮短為 3 秒隱藏
+        self.hide_timer.start(3000)
 
     def syncPosition(self):
         screen = self.player.screen()
@@ -129,7 +146,7 @@ class FullscreenOverlay(QWidget):
 class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Gemini Pro Player")
+        self.setWindowTitle("Gemini Pro Player (VLC)")
         self.resize(1150, 750)
         
         self.is_mini_mode = False
@@ -137,9 +154,9 @@ class VideoPlayer(QMainWindow):
         self.playlist = []
         self.current_index = -1
 
-        self.mediaPlayer = QMediaPlayer()
-        self.audioOutput = QAudioOutput()
-        self.mediaPlayer.setAudioOutput(self.audioOutput)
+        # VLC Instance and Player
+        self.vlc_instance = vlc.Instance()
+        self.mediaPlayer = self.vlc_instance.media_player_new()
 
         self.centralWidget = QWidget()
         self.setCentralWidget(self.centralWidget)
@@ -154,13 +171,21 @@ class VideoPlayer(QMainWindow):
 
         self.leftSide = SideBarBtn("❮", lambda: self.skipVideo(-1))
         self.rightSide = SideBarBtn("❯", lambda: self.skipVideo(1))
-        self.videoWidget = QVideoWidget()
+        self.videoWidget = QWidget() # No longer QVideoWidget, just a container
+        self.videoWidget.setStyleSheet("background-color: black;")
         
         self.videoLayout.addWidget(self.leftSide)
         self.videoLayout.addWidget(self.videoWidget, 1)
         self.videoLayout.addWidget(self.rightSide)
 
-        self.mediaPlayer.setVideoOutput(self.videoWidget)
+        # Set VLC output to our widget
+        if sys.platform == "win32":
+            self.mediaPlayer.set_hwnd(self.videoWidget.winId())
+        elif sys.platform == "darwin":
+            self.mediaPlayer.set_nsobject(int(self.videoWidget.winId()))
+        else:
+            self.mediaPlayer.set_xwindow(int(self.videoWidget.winId()))
+
         self.fs_overlay = FullscreenOverlay(self)
 
         self.setupControls()
@@ -175,11 +200,39 @@ class VideoPlayer(QMainWindow):
         self.mouse_monitor_timer.start(250) 
         self.last_mouse_pos = QPoint()
 
+        self.ui_update_timer = QTimer()
+        self.ui_update_timer.setInterval(200)
+        self.ui_update_timer.timeout.connect(self.updateUI)
+        self.ui_update_timer.start()
+
         self.setupShortcuts()
-        self.mediaPlayer.positionChanged.connect(self.positionChanged)
-        self.mediaPlayer.durationChanged.connect(self.durationChanged)
-        self.mediaPlayer.playbackStateChanged.connect(self.updateButtons)
         self.loadAppIcon()
+
+    def updateUI(self):
+        if self.mediaPlayer.is_playing() or True:
+            # Sync Slider
+            length = self.mediaPlayer.get_length()
+            if length > 0:
+                pos = self.mediaPlayer.get_time()
+                if not self.slider.isSliderDown():
+                    self.slider.setRange(0, length)
+                    self.slider.setValue(pos)
+                if not self.fs_overlay.slider.isSliderDown():
+                    self.fs_overlay.slider.setRange(0, length)
+                    self.fs_overlay.slider.setValue(pos)
+                
+                time_str = self.formatTime(pos)
+                total_str = self.formatTime(length)
+                self.currTimeLbl.setText(time_str)
+                self.totalTimeLbl.setText(total_str)
+                self.fs_overlay.currLbl.setText(time_str)
+                self.fs_overlay.totalLbl.setText(total_str)
+            
+            # Sync Play Button
+            state = self.mediaPlayer.get_state()
+            txt = "⏸" if state == vlc.State.Playing else "▶"
+            self.playBtn.setText(txt)
+            self.fs_overlay.playBtn.setText(txt)
 
     def monitor_mouse_fullscreen(self):
         if self.isFullScreen():
@@ -220,12 +273,16 @@ class VideoPlayer(QMainWindow):
         volume = QHBoxLayout()
         self.volLbl = QLabel("🔊")
         self.volSlider = QSlider(Qt.Orientation.Horizontal)
-        self.volSlider.setRange(0, 100)
-        self.volSlider.setValue(70)
-        self.volSlider.setFixedWidth(100)
+        self.volSlider.setRange(0, 600)
+        self.volSlider.setValue(100)
+        self.volSlider.setFixedWidth(120)
         self.volSlider.valueChanged.connect(self.setVolume)
+        self.volPercLbl = QLabel("100%")
+        self.volPercLbl.setFixedWidth(40)
+        
         volume.addWidget(self.volLbl)
         volume.addWidget(self.volSlider)
+        volume.addWidget(self.volPercLbl)
 
         btns.addWidget(self.openBtn)
         btns.addStretch(1)
@@ -265,17 +322,20 @@ class VideoPlayer(QMainWindow):
 
     def loadVideo(self, fileName):
         if fileName:
-            fileName = os.path.normpath(fileName).replace('\\', '/')
+            fileName = os.path.normpath(fileName)
             self.updatePlaylist(fileName)
-            self.mediaPlayer.setSource(QUrl.fromLocalFile(fileName))
+            media = self.vlc_instance.media_new(fileName)
+            self.mediaPlayer.set_media(media)
             self.mediaPlayer.play()
             self.setWindowTitle(f"Gemini Pro Player - {os.path.basename(fileName)}")
+            # VLC requires a moment to start playback before volume/position can be set
+            QTimer.singleShot(100, lambda: self.setVolume(self.volSlider.value()))
 
     def updatePlaylist(self, currentFile):
         dir_path = os.path.dirname(os.path.abspath(currentFile))
         exts = ('.mp4', '.mkv', '.avi', '.mov', '.wmv')
         try:
-            self.playlist = sorted([os.path.join(dir_path, f).replace('\\', '/') for f in os.listdir(dir_path) if f.lower().endswith(exts)])
+            self.playlist = sorted([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.lower().endswith(exts)])
             self.current_index = self.playlist.index(currentFile) if currentFile in self.playlist else -1
             has_multi = len(self.playlist) > 1
             self.leftSide.setVisible(has_multi)
@@ -288,29 +348,29 @@ class VideoPlayer(QMainWindow):
             self.loadVideo(self.playlist[idx])
 
     def playVideo(self):
-        if self.mediaPlayer.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+        if self.mediaPlayer.is_playing():
             self.mediaPlayer.pause()
         else:
             self.mediaPlayer.play()
 
-    def updateButtons(self, state):
-        txt = "⏸" if state == QMediaPlayer.PlaybackState.PlayingState else "▶"
-        self.playBtn.setText(txt)
-        self.fs_overlay.playBtn.setText(txt)
+    def setPosition(self, p): 
+        self.mediaPlayer.set_time(p)
 
-    def positionChanged(self, p):
-        if not self.slider.isSliderDown(): self.slider.setValue(p)
-        if not self.fs_overlay.slider.isSliderDown(): self.fs_overlay.slider.setValue(p)
-        time_str = self.formatTime(p)
-        self.currTimeLbl.setText(time_str); self.fs_overlay.currLbl.setText(time_str)
+    def seekRelative(self, ms): 
+        new_pos = max(0, min(self.mediaPlayer.get_time() + ms, self.mediaPlayer.get_length()))
+        self.mediaPlayer.set_time(new_pos)
+    
+    def setVolume(self, v):
+        # VLC audio_set_volume accepts 0-100 as normal, but internally supports software gain
+        self.mediaPlayer.audio_set_volume(v)
+        self.volPercLbl.setText(f"{v}%")
+        if v == 0:
+            self.volLbl.setText("🔇")
+        elif v <= 100:
+            self.volLbl.setText("🔊")
+        else:
+            self.volLbl.setText("🔥")
 
-    def durationChanged(self, d):
-        self.slider.setRange(0, d); self.fs_overlay.slider.setRange(0, d)
-        total_str = self.formatTime(d); self.totalTimeLbl.setText(total_str); self.fs_overlay.totalLbl.setText(total_str)
-
-    def setPosition(self, p): self.mediaPlayer.setPosition(p)
-    def seekRelative(self, ms): self.mediaPlayer.setPosition(max(0, min(self.mediaPlayer.position() + ms, self.mediaPlayer.duration())))
-    def setVolume(self, v): self.audioOutput.setVolume(v / 100); self.volLbl.setText("🔊" if v > 0 else "🔇")
     def formatTime(self, ms):
         s, m, h = (ms // 1000) % 60, (ms // 60000) % 60, (ms // 3600000)
         return f"{h:02}:{m:02}:{s:02}" if h > 0 else f"{m:02}:{s:02}"
@@ -359,6 +419,7 @@ class VideoPlayer(QMainWindow):
             icon = QIcon(icon_path); self.setWindowIcon(icon); QApplication.setWindowIcon(icon)
 
     def closeEvent(self, event):
+        self.mediaPlayer.stop()
         self.fs_overlay.close(); super().closeEvent(event)
 
 if __name__ == "__main__":
